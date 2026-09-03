@@ -1,0 +1,247 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// ENUMS DEL SISTEMA
+// ==========================================
+
+enum Role {
+  ASPIRANTE
+  RECLUTADOR
+  ADMIN
+}
+
+enum ApplicationStatus {
+  PENDIENTE
+  EN_PRUEBAS
+  ENTREVISTA
+  CONTRATADO
+  RECHAZADO
+}
+
+enum NivelJerarquico {
+  DIRECTIVO
+  EJECUTIVO
+  OPERATIVO_JEFATURA
+  OPERATIVO_TECNICO
+  OPERATIVO_BASE
+  ENTRADA_FORMACION
+}
+
+enum EstadoEmbudo {
+  APLICADO
+  RECHAZADO_ELIMINATORIA
+  REVISION_CV
+  VIDEO_ENTREVISTA
+  PSICOMETRICA
+  PODIO_FINAL
+  CONTRATADO
+  RECHAZADO_FINAL
+}
+
+enum TipoPrueba {
+  PSICOTECNICA
+  PERSONALIDAD
+  TECNICA
+  COMPETENCIAS
+  CONOCIMIENTOS
+  ACTITUDINAL
+}
+
+enum TipoPregunta {
+  OPCION_MULTIPLE
+  SELECCION_MULTIPLE
+  ESCALA_LIKERT
+  VERDADERO_FALSO
+  TEXTO_ABIERTO
+}
+
+enum EstadoPrueba {
+  PENDIENTE
+  EN_PROGRESO
+  COMPLETADA
+  APROBADA
+  REPROBADA
+}
+
+// ==========================================
+// MODELOS DE AUTENTICACIÓN (NEXTAUTH)
+// ==========================================
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  passwordHash  String?
+  image         String?
+  rol           Role      @default(ASPIRANTE)
+  createdAt     DateTime  @default(now())
+  
+  accounts      Account[]
+  sessions      Session[]
+  perfilAspirante PerfilAspirante?
+  postulaciones   Postulacion[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ==========================================
+// MODELOS DEL NEGOCIO (RECLUTAMIENTO)
+// ==========================================
+
+model PerfilAspirante {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  telefono       String?
+  cvUrl          String?
+  experiencia    String?
+  educacion      String?
+}
+
+model OfertaEmpleo {
+  id                     String           @id @default(cuid())
+  titulo                 String
+  descripcion            String
+  ubicacion              String
+  salario                String?
+  salarioMin             Float?           // Para filtro automático de pretensiones
+  salarioMax             Float?           // Para filtro automático de pretensiones
+  modalidad              String?          // Presencial, Híbrido, Remoto
+  nivelJerarquico        NivelJerarquico  @default(OPERATIVO_TECNICO)
+  preguntasEliminatorias Json?            // Array de objetos: [{pregunta: "...", opciones: ["Si", "No"], respuestaCorrecta: "Si"}]
+  estado                 Boolean          @default(true)
+  createdAt              DateTime         @default(now())
+  
+  postulaciones          Postulacion[]
+}
+
+model Postulacion {
+  id                      String            @id @default(cuid())
+  userId                  String
+  user                    User              @relation(fields: [userId], references: [id])
+  ofertaId                String
+  oferta                  OfertaEmpleo      @relation(fields: [ofertaId], references: [id])
+  
+  // Campos del Embudo Automatizado
+  estadoEmbudo            EstadoEmbudo      @default(APLICADO)
+  scoreParsing            Float?            // Porcentaje de coincidencia del CV (0-100)
+  respuestasEliminatorias Json?             // Respuestas dadas por el candidato al filtro
+  videoEntrevistaUrl      String?           // Link a la grabación de video
+  
+  // Campos tradicionales
+  estado                  ApplicationStatus @default(PENDIENTE)
+  puntajePrueba           Float?
+  createdAt               DateTime          @default(now())
+  
+  resultadosPrueba        ResultadoPrueba[]
+}
+
+// ==========================================
+// MODELOS DE PRUEBAS PSICOMÉTRICAS
+// ==========================================
+
+model Prueba {
+  id              String        @id @default(cuid())
+  titulo          String
+  descripcion     String
+  tipo            TipoPrueba
+  duracionMinutos Int           @default(0)
+  puntajeMinimo   Float?
+  activa          Boolean       @default(true)
+  preguntas       Pregunta[]
+  resultados      ResultadoPrueba[]
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+}
+
+model Pregunta {
+  id          String            @id @default(cuid())
+  pruebaId    String
+  prueba      Prueba            @relation(fields: [pruebaId], references: [id], onDelete: Cascade)
+  texto       String
+  tipo        TipoPregunta
+  orden       Int               @default(0)
+  puntaje     Float             @default(1.0)
+  opciones    OpcionRespuesta[]
+  createdAt   DateTime          @default(now())
+}
+
+model OpcionRespuesta {
+  id          String   @id @default(cuid())
+  preguntaId  String
+  pregunta    Pregunta @relation(fields: [preguntaId], references: [id], onDelete: Cascade)
+  texto       String
+  esCorrecta  Boolean  @default(false)
+  valor       Int      @default(0) // Para escalas (1-5)
+  orden       Int      @default(0)
+}
+
+model ResultadoPrueba {
+  id              String        @id @default(cuid())
+  postulacionId   String
+  postulacion     Postulacion   @relation(fields: [postulacionId], references: [id])
+  pruebaId        String
+  prueba          Prueba        @relation(fields: [pruebaId], references: [id])
+  puntajeObtenido Float         @default(0)
+  puntajeTotal    Float         @default(0)
+  porcentaje      Float         @default(0)
+  estado          EstadoPrueba  @default(PENDIENTE)
+  respuestas      RespuestaCandidato[]
+  iniciadoEn      DateTime      @default(now())
+  completadoEn    DateTime?
+  createdAt       DateTime      @default(now())
+}
+
+model RespuestaCandidato {
+  id                String          @id @default(cuid())
+  resultadoPruebaId String
+  resultadoPrueba   ResultadoPrueba @relation(fields: [resultadoPruebaId], references: [id], onDelete: Cascade)
+  preguntaId        String
+  opcionId          String?
+  respuestaTexto    String?
+  esCorrecta        Boolean?
+  puntajeObtenido   Float           @default(0)
+  tiempoRespuesta   Int             @default(0)
+  createdAt         DateTime        @default(now())
+}
